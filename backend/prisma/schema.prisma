@@ -1,0 +1,150 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id           String         @id @default(uuid())
+  username     String         @unique
+  email        String         @unique
+  passwordHash String?        // null if user only uses OTP/social login
+  role         Role           @default(USER)
+  bio          String?        @default("")
+  profilePic   String?        @default("default.png")
+  isActive     Boolean        @default(true)
+  emailVerified Boolean       @default(false)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  lastLogin    DateTime?
+
+  // relations
+  posts        Post[] 
+  comments     Comment[]
+  likes        Like[]
+  followers    Follows[]      @relation("Follows_followingIdToUser")
+  following    Follows[]      @relation("Follows_followerIdToUser")
+  otps         Otp[]
+  refreshTokens RefreshToken[]
+
+  @@index([email, username])
+}
+
+model Post {
+  id            String    @id @default(uuid())
+  caption       String?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  likesCount    Int       @default(0)
+  commentsCount Int       @default(0)
+  sharesCount   Int       @default(0)
+
+  authorId      String
+  author        User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  Comment       Comment[]
+  Like          Like[]
+
+  @@index([authorId])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  text      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  authorId  String
+  postId    String
+
+  author    User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([authorId])
+  @@index([postId])
+}
+
+model Like {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  userId    String
+  postId    String
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@index([userId])
+  @@index([postId])
+}
+
+model Follows {
+  id          String   @id @default(uuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower    User @relation("Follows_followerIdToUser", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User @relation("Follows_followingIdToUser", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+}
+
+/*
+  OTP model:
+  - store multiple OTPs per user (don't make userId unique)
+  - keep track if OTP was used, attempts, expiration
+  - purpose optional: "LOGIN" | "VERIFY_EMAIL" etc. Could be enforced with enum if desired.
+*/
+model Otp {
+  id         String   @id @default(uuid())
+  otpCode    String
+  purpose    String?  // e.g. "LOGIN", "SIGNUP", "RESET_PASSWORD", "VERIFY_EMAIL"
+  used       Boolean  @default(false)
+  attempts   Int      @default(0)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+
+  userId     String?  // optional if OTP used before user record exists; but usually points to existing user
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+/*
+  RefreshToken model (for refresh-token rotation / revocation):
+  - store a hashed token (so DB doesn't contain plaintext token)
+  - store expiry, revoked flag, metadata for security (ip, userAgent)
+  - optional replacedByTokenId allows rotation chain tracking
+*/
+model RefreshToken {
+  id             String    @id @default(uuid())
+  tokenHash      String    // store bcrypt/hash of the refresh token
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
+  revoked        Boolean   @default(false)
+  replacedById   String?   // points to the token that replaced this one (rotation)
+  ip             String? 
+  userAgent      String?
+
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([expiresAt])
+}
